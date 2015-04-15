@@ -23,7 +23,15 @@ class Encoding:
     >>> data = np.random.random(10000).reshape(-1, 10)
     >>> encoding = FisherEncoding(2, 100)
     >>> encoding.fit(data)
-    >>> fv = encoding.encode_single(np.random(10))
+    >>> fv = encoding.encode_single(np.random.random(10))
+    >>> assert len(fv) == 2+2*10+2*10
+    >>> fv = encoding.encode([np.random.random(10) for _ in xrange(100)])
+    >>> assert len(fv) == 2+2*10+2*10
+    >>> encoding.normalization |= FisherEncoding.L2_NORMALIZATION
+    >>> fv = encoding.encode([np.random.random(10) for _ in xrange(100)])
+    >>> assert len(fv) == 2+2*10+2*10
+    >>> encoding.normalization |= FisherEncoding.POWER_NORMALIZATION
+    >>> fv = encoding.encode([np.random.random(10) for _ in xrange(100)])
     >>> assert len(fv) == 2+2*10+2*10
     >>>
     """
@@ -147,7 +155,8 @@ class Encoding:
         self.inverted_covariances_sqrt = np.sqrt(self.inverted_covariances)
         self.inverted_covariances_3rd_power = self.inverted_covariances_sqrt**3
 
-        # calculate the 
+        # calculate the fisher information matrix diagonal
+        N = self.N
         D = data[0].size
         self.normalization_factor = np.zeros(
             N +    # weights
@@ -157,11 +166,11 @@ class Encoding:
         self.normalization_factor[:N] = 1/self.weights
         for i in xrange(self.N):
             self.normalization_factor[N+i*D:N+(i+1)*D] = (
-                self.weights/self.inverted_covariances
+                self.weights[i]/self.inverted_covariances[i]
             )
         for i in xrange(self.N):
             self.normalization_factor[N+N*D+i*D:N+N*D+(i+1)*D] = (
-                2*self.weights/self.inverted_covariances
+                2*self.weights[i]/self.inverted_covariances[i]
             )
         self.normalization_factor = 1/np.sqrt(self.normalization_factor)
 
@@ -193,7 +202,7 @@ class Encoding:
 
         # check if we should be performing L2 normalization
         if self.normalization & self.L2_NORMALIZATION:
-            fisher_vector /= np.sqrt(np.dot(fisher_vector))
+            fisher_vector /= np.sqrt(np.dot(fisher_vector, fisher_vector))
 
         return fisher_vector
 
