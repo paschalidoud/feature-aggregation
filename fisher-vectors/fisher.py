@@ -28,19 +28,28 @@ class Encoding:
     >>>
     """
 
-    def __init__(self, N, iterations):
+    POWER_NORMALIZATION = 1
+    L2_NORMALIZATION = 2
+
+    def __init__(self, N, iterations, normalization=0):
         """Initialize the class instance.
 
         Parameters
         ----------
-        N:          int
-                    The number of gaussians to be used for the fisher vector
-                    encoding
-        iterations: int
-                    The maximum number of iterations to perform fitting the GMM
+        N:             int
+                       The number of gaussians to be used for the fisher vector
+                       encoding
+        iterations:    int
+                       The maximum number of iterations to perform fitting the
+                       GMM
+        normalization: ['sum', 'closed-form']
+                       A way to approximate the diagonal of the fisher
+                       information matrix in order to normalize the fisher
+                       vectors so that they can be used with linear classifiers
         """
         self.N = N
         self.iterations = iterations
+        self.normalization = normalization
 
         # initialize the rest of the  attributes of the class for any use
         # (mainly because we want to be able to check if fit has been called
@@ -51,6 +60,7 @@ class Encoding:
         self.inverted_covariances = None
         self.inverted_covariances_sqrt = None
         self.inverted_covariances_3rd_power = None
+        self.normalization_factor = None
 
     def __getstate__(self):
         """Return the data that should be pickled in order to save the fisher
@@ -66,6 +76,7 @@ class Encoding:
         return {
             "N": self.N,
             "iterations": self.iterations,
+            "normalization": self.normalization,
 
             "weights": self.weights,
             "means": self.means,
@@ -73,7 +84,8 @@ class Encoding:
             "inverted_covariances": self.inverted_covariances,
             "inverted_covariances_sqrt": self.inverted_covariances_sqrt,
             "inverted_covariances_3rd_power":
-                self.inverted_covariances_3rd_power
+                self.inverted_covariances_3rd_power,
+            "normalization_factor": self.normalization_factor
         }
 
     def __setstate__(self, state):
@@ -86,6 +98,7 @@ class Encoding:
         """
         self.N = state["N"]
         self.iterations = state["iterations"]
+        self.normalization = state["normalization"]
 
         self.weights = state["weights"]
         self.means = state["means"]
@@ -95,6 +108,7 @@ class Encoding:
         self.inverted_covariances_3rd_power = state[
             "inverted_covariances_3rd_power"
         ]
+        self.normalization_factor = state["normalization_factor"]
 
         # re-calculate the probability density functions
         self._calculate_pdfs()
@@ -133,6 +147,24 @@ class Encoding:
         self.inverted_covariances_sqrt = np.sqrt(self.inverted_covariances)
         self.inverted_covariances_3rd_power = self.inverted_covariances_sqrt**3
 
+        # calculate the 
+        D = data[0].size
+        self.normalization_factor = np.zeros(
+            N +    # weights
+            N*D +  # means
+            N*D    # diagonal covariance
+        )
+        self.normalization_factor[:N] = 1/self.weights
+        for i in xrange(self.N):
+            self.normalization_factor[N+i*D:N+(i+1)*D] = (
+                self.weights/self.inverted_covariances
+            )
+        for i in xrange(self.N):
+            self.normalization_factor[N+N*D+i*D:N+N*D+(i+1)*D] = (
+                2*self.weights/self.inverted_covariances
+            )
+        self.normalization_factor = 1/np.sqrt(self.normalization_factor)
+
     def encode(self, data):
         """Encode a list of data using the the learnt fisher vector encoding.
 
@@ -146,9 +178,24 @@ class Encoding:
               GMM.
         """
         # assume independent components in data
-        return sum((
-            self.encode_single(x) for x in data
-        ))
+        fisher_vector = 0
+        count = 0
+        for x in data:
+            fisher_vector += self.encode_single(x)
+            count += 1
+
+        # normalize the vector
+        fisher_vector *= (1./count)*self.normalization_factor
+
+        # check if we should be normalizing the power
+        if self.normalization & self.POWER_NORMALIZATION:
+            fisher_vector = np.sqrt(np.abs(fisher_vector))*np.sign(fisher_vector)
+
+        # check if we should be performing L2 normalization
+        if self.normalization & self.L2_NORMALIZATION:
+            fisher_vector /= np.sqrt(np.dot(fisher_vector))
+
+        return fisher_vector
 
     def encode_single(self, x):
         """Compute the grad with respect to the parameters of the model for the
@@ -218,6 +265,9 @@ class Encoding:
         Z = 1./np.sum(weighted_probs)
 
         # first derivative with respect to the weights
+        # this doesn't account for the constraint that the sum of the weights
+        # should always equal to 1 evaluate if we need to change it as it is in
+        # the paper
         fisher[0:N] = Z*probs
 
         # second derivative with respect to the means
