@@ -193,6 +193,12 @@ class Encoding:
             fisher_vector += self.encode_single(x)
             count += 1
 
+        # if there is no features for a specific video so the count is 0 return
+        # a zero vector
+        if count == 0:
+            # the normalization factor is the same size as the fisher vector
+            return np.zeros(self.normalization_factor.shape)
+
         # normalize the vector
         fisher_vector *= (1./count)*self.normalization_factor
 
