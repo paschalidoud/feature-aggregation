@@ -62,6 +62,10 @@ class Encoding:
               List of data points that will be encoded using the already
               computed Bag of Words model
         """
+        # If there are no features for a specific video return a zero array
+        if len(data) == 0:
+            return np.zeros(self.n_codewords)
+
         # Represent each datapoint as histogram. When n_codewords is sequence
         # bins arguement corresponds to bin edges, this is the reason why we
         # add 1. Moreover we subtract 0.5 so that each bin's label is in the
