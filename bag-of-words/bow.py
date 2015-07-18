@@ -72,6 +72,7 @@ class Encoding:
         # middle of it's corresponding bin.
         hist, edges = np.histogram(
             self._clusterer.predict(data),
-            bins=np.arange(self.n_codewords + 1) - .5
+            bins=np.arange(self.n_codewords + 1) - .5,
+            density=True
         )
         return hist
