@@ -53,7 +53,7 @@ class Encoding:
         # Compute clustering
         self._clusterer.fit(data)
 
-    def encode(self, data):
+    def encode(self, data, density):
         """Encode a list of data using the learnt Bag of Words model
 
         Parameters:
@@ -73,6 +73,6 @@ class Encoding:
         hist, edges = np.histogram(
             self._clusterer.predict(data),
             bins=np.arange(self.n_codewords + 1) - .5,
-            density=True
+            density=density
         )
         return hist
