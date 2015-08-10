@@ -38,6 +38,15 @@ class Encoding:
             max_iter=iterations
         )
 
+    @property
+    def centroids(self):
+        """The centroids of the encoding"""
+        return self._clusterer.cluster_centers_.copy()
+
+    @centroids.setter
+    def centroids(self, centroids):
+        self._clusterer.cluster_centers_ = centroids.copy()
+
     def fit(self, data):
         """Build a visual dictionary for the Bag of Words model.
 
