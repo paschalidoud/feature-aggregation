@@ -86,3 +86,19 @@ class Encoding(BaseEstimator):
             density=density
         )
         return hist
+
+    def transform(self, data):
+        """Transforms the data according to the computed model. This function
+        basically creates a sequence of symbols from the computed data
+
+        Parameters:
+        -----------
+        data: array_like
+              List of data points that will be encoded using the already
+              computed Bag of Words model
+        """
+        # If there are no features for a specific video return a zero array
+        if len(data) == 0:
+            return np.empty([])
+
+        return self._clusterer.predict(data)
