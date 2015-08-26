@@ -8,10 +8,11 @@ features according to the previously caclulated vocabulary.
 """
 
 import numpy as np
+from sklearn.base import BaseEstimator
 from sklearn.cluster import KMeans
 
 
-class Encoding:
+class Encoding(BaseEstimator):
     """This class is responsible for computing a Bag of Words model"""
 
     def __init__(self, n_codewords, iterations, clusterer=KMeans):
@@ -44,8 +45,8 @@ class Encoding:
         return self._clusterer.cluster_centers_.copy()
 
     @centroids.setter
-    def centroids(self, centroids):
-        self._clusterer.cluster_centers_ = centroids.copy()
+    def centroids(self, _centroids):
+        self._clusterer.cluster_centers_ = _centroids.copy()
 
     def fit(self, data):
         """Build a visual dictionary for the Bag of Words model.
