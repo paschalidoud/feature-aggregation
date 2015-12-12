@@ -100,5 +100,5 @@ class Encoding(BaseEstimator):
         # If there are no features for a specific video return a zero array
         if len(data) == 0:
             return np.array([])
-         
+
         return self._clusterer.predict(data)
