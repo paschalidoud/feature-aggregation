@@ -10,9 +10,18 @@ features according to the previously caclulated vocabulary.
 import numpy as np
 from sklearn import cluster
 from sklearn.base import BaseEstimator
-from sklearn.metrics import pairwise_distances
+from sklearn.metrics import pairwise_distances_argmin_min
 
 from common.functional import partial, ___
+
+
+def _mini_batch_kmeans_factory(n_clusters=None, max_iter=None):
+    return cluster.MiniBatchKMeans(
+        n_clusters=n_clusters,
+        max_iter=max_iter,
+        n_init=1,
+        batch_size=max(100, 5*n_clusters),
+    )
 
 
 class Encoding(BaseEstimator):
@@ -20,7 +29,7 @@ class Encoding(BaseEstimator):
 
     _clusterers = {
         "kmeans": partial(cluster.KMeans, n_init=1),
-        "fast_kmeans": partial(cluster.MiniBatchKMeans, n_init=1)
+        "fast_kmeans": _mini_batch_kmeans_factory
     }
 
     def __init__(self, n_codewords, iterations, clusterer="fast_kmeans"):
@@ -41,6 +50,7 @@ class Encoding(BaseEstimator):
         """
         self.n_codewords = n_codewords
         self.iterations = iterations
+        self.clusterer = clusterer
 
         self._clusterer = self._clusterers[clusterer](
             n_clusters=n_codewords,
@@ -127,12 +137,18 @@ class Encoding(BaseEstimator):
 
         return self._clusterer.predict(data)
 
-    def score(self, data, y=None):
-        """Compute the inertia of the centroids for the given data"""
+    def inertia(self, data):
+        """Return the value of the KMeans objective function on the provided
+        data"""
         centroids = self.centroids
 
-        return pairwise_distances(
+        return pairwise_distances_argmin_min(
             data,
             centroids,
             metric='sqeuclidean'
-        ).min(axis=1).sum()
+        )[1].sum()
+
+    def score(self, data, y=None):
+        """Return the negative inertia so that the best score is the max
+        score"""
+        return -self.inertia(data)
