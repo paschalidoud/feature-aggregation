@@ -8,14 +8,22 @@ features according to the previously caclulated vocabulary.
 """
 
 import numpy as np
+from sklearn import cluster
 from sklearn.base import BaseEstimator
-from sklearn.cluster import KMeans
+from sklearn.metrics import pairwise_distances
+
+from common.functional import partial, ___
 
 
 class Encoding(BaseEstimator):
     """This class is responsible for computing a Bag of Words model"""
 
-    def __init__(self, n_codewords, iterations, clusterer=KMeans):
+    _clusterers = {
+        "kmeans": partial(cluster.KMeans, n_init=1),
+        "fast_kmeans": partial(cluster.MiniBatchKMeans, n_init=1)
+    }
+
+    def __init__(self, n_codewords, iterations, clusterer="fast_kmeans"):
         """Initialize the class instance.
 
         Parameters:
@@ -34,7 +42,7 @@ class Encoding(BaseEstimator):
         self.n_codewords = n_codewords
         self.iterations = iterations
 
-        self._clusterer = clusterer(
+        self._clusterer = self._clusterers[clusterer](
             n_clusters=n_codewords,
             max_iter=iterations
         )
@@ -48,7 +56,7 @@ class Encoding(BaseEstimator):
     def centroids(self, _centroids):
         self._clusterer.cluster_centers_ = _centroids.copy()
 
-    def fit(self, data):
+    def fit(self, data, y=None):
         """Build a visual dictionary for the Bag of Words model.
 
         Apply a clustering algorithm to the data, the default option is Kmeans,
@@ -62,6 +70,22 @@ class Encoding(BaseEstimator):
         """
         # Compute clustering
         self._clusterer.fit(data)
+
+        return self
+
+    def partial_fit(self, data, y=None):
+        """Partially learn the visual dictionary from the provided data.
+
+        This allows us to learn from data that do not fit in memory.
+
+        Parameters:
+        -----------
+        data: array_like
+              The batch to partially learn the vocabulary from
+        """
+        self._clusterer.partial_fit(data)
+
+        return self
 
     def encode(self, data, density):
         """Encode a list of data using the learnt Bag of Words model
@@ -87,7 +111,7 @@ class Encoding(BaseEstimator):
         )
         return hist
 
-    def transform(self, data):
+    def transform(self, data, y=None):
         """Transforms the data according to the computed model. This function
         basically creates a sequence of symbols from the computed data
 
@@ -102,3 +126,13 @@ class Encoding(BaseEstimator):
             return np.array([])
 
         return self._clusterer.predict(data)
+
+    def score(self, data, y=None):
+        """Compute the inertia of the centroids for the given data"""
+        centroids = self.centroids
+
+        return pairwise_distances(
+            data,
+            centroids,
+            metric='sqeuclidean'
+        ).min(axis=1).sum()
