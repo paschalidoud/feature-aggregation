@@ -145,7 +145,8 @@ class Encoding(BaseEstimator):
         return pairwise_distances_argmin_min(
             data,
             centroids,
-            metric='sqeuclidean'
+            metric="euclidean",
+            metric_kwargs={"squared": True}
         )[1].sum()
 
     def score(self, data, y=None):
