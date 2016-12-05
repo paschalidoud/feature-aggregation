@@ -1,20 +1,33 @@
-"""This module will contain functions and classes that allow the computation of
-a fisher vector encoding from a dataset and usage of an already computed
-encoding."""
+"""Aggregate local features using Fisher Vectors with a GMM as the
+probabilistic model"""
 
 import math
 import numpy as np
-from sklearn.mixture import GMM
+from sklearn.mixture import GaussianMixture
+
+from base import BaseAggregator
 
 
-class Encoding:
-    """This class is responsible for computing the fisher vector encoding.
+class FisherVectors(BaseAggregator):
+    """Aggregate local features using Fisher Vector encoding with a GMM.
 
-    It is picklable.
+    Train a GMM on some local features and then extract the normalized
+    derivative
 
-    The proposed way of using it is to create an instance during training and
-    pass it the data to cluster them using the GMM method. Then pickle the
-    instance. When encoding is needed unpickle the instance and use encode.
+    Parameters
+    ----------
+    n_gaussians : int
+                  The number of gaussians to be used for the fisher vector
+                  encoding
+    max_iter : int
+               The maximum number of EM iterations
+    normalization : int
+                    A bitmask of POWER_NORMALIZATION and L2_NORMALIZATION
+    dimension_ordering : {'th', 'tf'}
+                         Changes how n-dimensional arrays are reshaped to form
+                         simple local feature matrices. 'th' ordering means the
+                         local feature dimension is the second dimension and
+                         'tf' means it is the last dimension.
 
     Example
     -------
@@ -39,25 +52,13 @@ class Encoding:
     POWER_NORMALIZATION = 1
     L2_NORMALIZATION = 2
 
-    def __init__(self, N, iterations, normalization=0):
-        """Initialize the class instance.
-
-        Parameters
-        ----------
-        N:             int
-                       The number of gaussians to be used for the fisher vector
-                       encoding
-        iterations:    int
-                       The maximum number of iterations to perform fitting the
-                       GMM
-        normalization: ['sum', 'closed-form']
-                       A way to approximate the diagonal of the fisher
-                       information matrix in order to normalize the fisher
-                       vectors so that they can be used with linear classifiers
-        """
-        self.N = N
-        self.iterations = iterations
+    def __init__(self, n_gaussians, max_iter=100, normalization=3,
+                 dimension_ordering="tf"):
+        self.n_gaussians = n_gaussians
+        self.max_iter = max_iter
         self.normalization = normalization
+
+        super(self.__class__, self).__init__(dimension_ordering)
 
         # initialize the rest of the  attributes of the class for any use
         # (mainly because we want to be able to check if fit has been called
@@ -82,8 +83,8 @@ class Encoding:
         # we could be simply grabing self.__dict__ removing pdfs and returning
         # it but I believe this is more explicit
         return {
-            "N": self.N,
-            "iterations": self.iterations,
+            "n_gaussians": self.n_gaussians,
+            "max_iter": self.max_iter,
             "normalization": self.normalization,
 
             "weights": self.weights,
@@ -104,8 +105,8 @@ class Encoding:
         state: dictionary
                The unpickled data that were returned by __getstate__
         """
-        self.N = state["N"]
-        self.iterations = state["iterations"]
+        self.n_gaussians = state["n_gaussians"]
+        self.max_iter = state["max_iter"]
         self.normalization = state["normalization"]
 
         self.weights = state["weights"]
@@ -121,30 +122,32 @@ class Encoding:
         # re-calculate the probability density functions
         self._calculate_pdfs()
 
-    def fit(self, data):
+    def fit(self, X, y=None):
         """Learn a fisher vector encoding.
 
-        Fit a gaussian mixture model to the `data` using `N` gaussians with
+        Fit a gaussian mixture model to the data using n_gaussians with
         diagonal covariance matrices.
 
         Parameters
         ----------
-        data: array_like, shape(n, n_features)
-              List of data points that will be passed to the GMM for fitting.
+        X : array_like or list
+            The local features to train on. They must be either nd arrays or
+            a list of nd arrays.
         """
+        X, _ = self._reshape_local_features(X)
 
         # consider changing the initialization parameters
-        gmm = GMM(
-            n_components=self.N,
-            n_iter=self.iterations,
+        gmm = GaussianMixture(
+            n_components=self.n_gaussians,
+            max_iter=self.max_iter,
             covariance_type='diag'
         )
-        gmm.fit(data)
+        gmm.fit(X)
 
         # save the results of the gmm
         self.weights = gmm.weights_
         self.means = gmm.means_
-        self.covariances = gmm.covars_
+        self.covariances = gmm.covariances_
 
         # precompute stats for encoding
         # we might be unnecessarily spending some memory here to speed up some
@@ -156,63 +159,63 @@ class Encoding:
         self.inverted_covariances_3rd_power = self.inverted_covariances_sqrt**3
 
         # calculate the fisher information matrix diagonal
-        N = self.N
-        D = data[0].size
+        N = self.n_gaussians
+        D = X[0].size
         self.normalization_factor = np.zeros(
             N +    # weights
             N*D +  # means
             N*D    # diagonal covariance
         )
         self.normalization_factor[:N] = 1/self.weights
-        for i in xrange(self.N):
+        for i in xrange(self.n_gaussians):
             self.normalization_factor[N+i*D:N+(i+1)*D] = (
                 self.weights[i]/self.inverted_covariances[i]
             )
-        for i in xrange(self.N):
+        for i in xrange(self.n_gaussians):
             self.normalization_factor[N+N*D+i*D:N+N*D+(i+1)*D] = (
                 2*self.weights[i]/self.inverted_covariances[i]
             )
         self.normalization_factor = 1/np.sqrt(self.normalization_factor)
 
-    def encode(self, data):
-        """Encode a list of data using the the learnt fisher vector encoding.
-
-        The call to encode should result to one single vector assuming that the
-        rows of the data are independent and belong to the same instance.
+    def transform(self, X):
+        """Compute the fisher vector implementation of the provided data.
 
         Parameters
         ----------
-        data: array_like, shape(n, n_features)
-              List of data points that will be encoded using the already fit
-              GMM.
+        X : array_like or list
+            The local features to aggregate. They must be either nd arrays or
+            a list of nd arrays. In case of a list each item is aggregated
+            separately.
         """
-        # assume independent components in data
-        fisher_vector = 0
-        count = 0
-        for x in data:
-            fisher_vector += self.encode_single(x)
-            count += 1
+        # Get the local features and the number of local features per document
+        X, lengths = self._reshape_local_features(X)
 
-        # if there is no features for a specific video so the count is 0 return
-        # a zero vector
-        if count == 0:
-            # the normalization factor is the same size as the fisher vector
-            return np.zeros(self.normalization_factor.shape)
+        # Allocate the memory necessary for the encoded data
+        fv = np.zeros((len(lengths), self.normalization_factor.shape[0]))
 
-        # normalize the vector
-        fisher_vector *= (1./count)*self.normalization_factor
+        # Do a naive double loop for now
+        s, e = 0, 0
+        for i, l in enumerate(lengths):
+            s, e = e, e+l
+            for j in xrange(s, e):
+                fv[i] += self._encode_single(X[j])
+
+
+        # normalize the vectors
+        fv *= 1.0/np.array(lengths).reshape(-1, 1)
+        fv *= self.normalization_factor.reshape(1, -1)
 
         # check if we should be normalizing the power
         if self.normalization & self.POWER_NORMALIZATION:
-            fisher_vector = np.sqrt(np.abs(fisher_vector))*np.sign(fisher_vector)
+            fv = np.sqrt(np.abs(fv))*np.sign(fv)
 
         # check if we should be performing L2 normalization
         if self.normalization & self.L2_NORMALIZATION:
-            fisher_vector /= np.sqrt(np.dot(fisher_vector, fisher_vector))
+            fv /= np.sqrt(np.einsum("...j,...j", fv, fv)).reshape(-1, 1)
 
-        return fisher_vector
+        return fv
 
-    def encode_single(self, x):
+    def _encode_single(self, x):
         """Compute the grad with respect to the parameters of the model for the
         vector x.
 
@@ -247,12 +250,12 @@ class Encoding:
         # incorrectly. The performance hit is negligible since it will probably
         # be nanoseconds per call.
         if self.weights is None:
-            raise Exception(
+            raise RuntimeError(
                 "GMM model not found. Have you called fit(data) first?"
             )
 
         # number of gaussians
-        N = self.N
+        N = self.n_gaussians
 
         # number of dimensions
         D = self.means.shape[1]
@@ -314,7 +317,7 @@ class Encoding:
         """
         self.pdfs = [
             self._multivariate_normal_pdf(self.means[i], self.covariances[i])
-            for i in xrange(self.N)
+            for i in xrange(self.n_gaussians)
         ]
 
     @staticmethod
