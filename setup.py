@@ -7,7 +7,7 @@ from setuptools import find_packages, setup
 
 # Define constants that describe the package to PyPI
 NAME = "feature-aggregation"
-VERSION = "0.1"
+VERSION = "0.1.1"
 DESCRIPTION = "Aggregate local features into global features"
 with open("README.rst") as f:
     LONG_DESCRIPTION = f.read()

@@ -23,19 +23,16 @@ class BaseAggregator(BaseEstimator):
         if isinstance(X, list):
             arrays = [
                 x.T.reshape(-1, dims)
-                    if self.dimension_ordering == "th"
-                    else x.reshape(-1, dims)
+                if self.dimension_ordering == "th"
+                else x.reshape(-1, dims)
                 for x in X
             ]
             lengths = [len(x) for x in arrays]
             X = np.vstack(arrays)
         else:
             if self.dimension_ordering == "th":
-                X = X.transpose(*((0) + X.shape[2:] + X.shape[1:2]))
-                lengths = [np.prod(X.shape[2:])]*X.shape[0]
-            else:
-                lengths = [np.prod(X.shape[1:-1])]*X.shape[0]
+                X = X.transpose(*([0] + range(2, len(X.shape)) + [1]))
+            lengths = [np.prod(X.shape[1:-1])]*X.shape[0]
             X = X.reshape(-1, dims)
 
         return X, lengths
-
