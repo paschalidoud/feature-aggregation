@@ -32,7 +32,7 @@ class BaseAggregator(BaseEstimator):
         else:
             if self.dimension_ordering == "th":
                 X = X.transpose(*([0] + range(2, len(X.shape)) + [1]))
-            lengths = [np.prod(X.shape[1:-1])]*X.shape[0]
+            lengths = [int(np.prod(X.shape[1:-1]))]*X.shape[0]
             X = X.reshape(-1, dims)
 
         return X, lengths
