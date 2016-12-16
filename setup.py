@@ -5,9 +5,16 @@ from os import path
 from setuptools import find_packages, setup
 
 
+def get_version():
+    with open("feature_aggregation/__init__.py") as f:
+        for line in f:
+            if line.startswith("__version__"):
+                return line.replace("'", "").replace('"', '').split()[-1]
+    raise RuntimeError("Could not find the version string in __init__.py")
+
+
 # Define constants that describe the package to PyPI
 NAME = "feature-aggregation"
-VERSION = "0.1.1"
 DESCRIPTION = "Aggregate local features into global features"
 with open("README.rst") as f:
     LONG_DESCRIPTION = f.read()
@@ -19,7 +26,7 @@ LICENSE = "MIT"
 def setup_package():
     setup(
         name=NAME,
-        version=VERSION,
+        version=get_version(),
         description=DESCRIPTION,
         long_description=LONG_DESCRIPTION,
         maintainer=MAINTAINER,
