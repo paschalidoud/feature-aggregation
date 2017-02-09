@@ -1,11 +1,54 @@
 """Aggregate local features using Fisher Vectors with a GMM as the
 probabilistic model"""
 
-import math
+from joblib import Parallel, delayed
 import numpy as np
 from sklearn.mixture import GaussianMixture
 
 from base import BaseAggregator
+
+
+def _transform_batch(x, means, inverted_covariances):
+    """Compute the grad with respect to the parameters of the model for the
+    each vector in the matrix x and return the sum.
+
+    see "Improving the Fisher Kernel for Large-Scale Image Classification"
+    by Perronnin et al. for the equations
+
+    Parameters
+    ----------
+    x: array
+       The feature matrix to be encoded with fisher encoding
+    means: array
+           The GMM means
+    inverted_covariances: array
+                          The inverse diagonal covariance matrix
+
+    Return
+    ------
+    vector The fisher vector for the passed in local features
+    """
+    # number of gaussians
+    N, D = means.shape
+
+    # number of dimensions
+    M, D = x.shape
+
+    # calculate the probabilities that each x was created by each gaussian
+    # distribution keeping some intermediate computations as well
+    diff = x.reshape(-1, D, 1) - means.T.reshape(1, D, N)
+    diff = diff.transpose(0, 2, 1)
+    diff_over_cov = diff*inverted_covariances.reshape(1, N, D)
+    q = diff_over_cov*diff
+    q = 0.5*q.sum(axis=-1)
+    q = np.exp(q - q.max(axis=1).reshape(-1, 1))
+    q /= q.sum(axis=1).reshape(-1, 1)
+
+    # Finally compute the unnormalized FV and return it
+    return np.hstack([
+        (q.reshape(M, N, 1) * diff_over_cov).sum(axis=0),
+        (q.reshape(M, N, 1) * (diff_over_cov**2 - 1)).sum(axis=0)
+    ]).ravel()
 
 
 class FisherVectors(BaseAggregator):
@@ -28,16 +71,27 @@ class FisherVectors(BaseAggregator):
                          simple local feature matrices. 'th' ordering means the
                          local feature dimension is the second dimension and
                          'tf' means it is the last dimension.
+    inner_batch : int
+                  Compute the fisher vector of 'inner_batch' vectors together.
+                  It controls a trade off between speed and memory.
+    n_jobs: int
+            The threads to use for the transform
+    verbose : int
+              Controls the verbosity of the GMM
     """
 
     POWER_NORMALIZATION = 1
     L2_NORMALIZATION = 2
 
     def __init__(self, n_gaussians, max_iter=100, normalization=3,
-                 dimension_ordering="tf"):
+                 dimension_ordering="tf", inner_batch=64, n_jobs=-1,
+                 verbose=0):
         self.n_gaussians = n_gaussians
         self.max_iter = max_iter
         self.normalization = normalization
+        self.inner_batch = inner_batch
+        self.n_jobs = n_jobs
+        self.verbose = verbose
 
         super(self.__class__, self).__init__(dimension_ordering)
 
@@ -48,8 +102,6 @@ class FisherVectors(BaseAggregator):
         self.means = None
         self.covariances = None
         self.inverted_covariances = None
-        self.inverted_covariances_sqrt = None
-        self.inverted_covariances_3rd_power = None
         self.normalization_factor = None
 
     def __getstate__(self):
@@ -68,6 +120,9 @@ class FisherVectors(BaseAggregator):
             "max_iter": self.max_iter,
             "normalization": self.normalization,
             "dimension_ordering": self.dimension_ordering,
+            "inner_batch": self.inner_batch,
+            "n_jobs": self.n_jobs,
+            "verbose": self.verbose,
 
             "weights": self.weights,
             "means": self.means,
@@ -84,16 +139,26 @@ class FisherVectors(BaseAggregator):
         state: dictionary
                The unpickled data that were returned by __getstate__
         """
-        self.n_gaussians = state["n_gaussians"]
-        self.max_iter = state["max_iter"]
-        self.normalization = state["normalization"]
-        self.dimension_ordering = state["dimension_ordering"]
+        # A temporary instance for accessing the default values
+        t = FisherVectors(0)
 
-        self.weights = state["weights"]
-        self.means = state["means"]
-        self.covariances = state["covariances"]
-        self.inverted_covariances = state["inverted_covariances"]
-        self.normalization_factor = state["normalization_factor"]
+        # Load from state
+        self.n_gaussians = state["n_gaussians"]
+        self.max_iter = state.get("max_iter", t.max_iter)
+        self.normalization = state.get("normalization", t.normalization)
+        self.dimension_ordering = \
+            state.get("dimension_ordering", t.dimension_ordering)
+        self.inner_batch = state.get("inner_batch", t.inner_batch)
+        self.n_jobs = state.get("n_jobs", t.n_jobs)
+        self.verbose = state.get("verbose", t.verbose)
+
+        self.weights = state.get("weights", t.weights)
+        self.means = state.get("means", t.means)
+        self.covariances = state.get("covariances", t.covariances)
+        self.inverted_covariances = \
+            state.get("inverted_covariances", t.inverted_covariances)
+        self.normalization_factor = \
+            state.get("normalization_factor", t.normalization_factor)
 
     def fit(self, X, y=None):
         """Learn a fisher vector encoding.
@@ -113,7 +178,8 @@ class FisherVectors(BaseAggregator):
         gmm = GaussianMixture(
             n_components=self.n_gaussians,
             max_iter=self.max_iter,
-            covariance_type='diag'
+            covariance_type='diag',
+            verbose=self.verbose
         )
         gmm.fit(X)
 
@@ -158,9 +224,16 @@ class FisherVectors(BaseAggregator):
         s, e = 0, 0
         for i, l in enumerate(lengths):
             s, e = e, e+l
-            for j in xrange(s, e):
-                self._encode_single(X[j], fv[i])
-
+            fv[i] = sum(
+                Parallel(n_jobs=self.n_jobs, backend="threading")(
+                    delayed(_transform_batch)(
+                        X[j:min(e, j+self.inner_batch)],
+                        self.means,
+                        self.inverted_covariances
+                    )
+                    for j in range(s, e, self.inner_batch)
+                )
+            )
 
         # normalize the vectors
         fv *= 1.0/np.array(lengths).reshape(-1, 1)
@@ -175,44 +248,3 @@ class FisherVectors(BaseAggregator):
             fv /= np.sqrt(np.einsum("...j,...j", fv, fv)).reshape(-1, 1)
 
         return fv
-
-    def _encode_single(self, x, fisher):
-        """Compute the grad with respect to the parameters of the model for the
-        vector x and add it to fisher.
-
-        see "Improving the Fisher Kernel for Large-Scale Image Classification"
-        by Perronnin et al. for the equations
-
-        Parameters
-        ----------
-        x: array
-           The feature vector to be encoded with fisher encoding
-        fisher : array
-                 A target array to accumulate the fisher vector in
-        """
-        # number of gaussians
-        N = self.n_gaussians
-
-        # number of dimensions
-        D = self.means.shape[1]
-
-        # calculate the probabilities that x was created by each gaussian
-        # distribution keeping some intermediate computations as well
-        diff = x.reshape(1, -1) - self.means
-        diff_over_cov = diff * self.inverted_covariances
-        dist = -0.5 * (diff_over_cov * diff).sum(axis=1)
-        q = self._softmax(dist).reshape(-1, 1)
-
-        # Check if the probability vector q contains inf or nan
-        if np.any(np.isinf(q)) or np.any(np.isnan(q)):
-            return
-
-        # derivative with respect to the means
-        fisher[:N*D] += (q * diff_over_cov).ravel()
-        # derivative with respect to the variances
-        fisher[N*D:] += (q * (diff_over_cov ** 2 - 1)).ravel()
-
-    @staticmethod
-    def _softmax(x):
-        a = np.exp(x - x.max())
-        return a / a.sum()
