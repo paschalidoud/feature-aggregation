@@ -8,7 +8,7 @@ from sklearn.mixture import GaussianMixture
 from base import BaseAggregator
 
 
-def _transform_batch(x, means, inverted_covariances):
+def _transform_batch(x, means, inv_covariances, inv_sqrt_covariances):
     """Compute the grad with respect to the parameters of the model for the
     each vector in the matrix x and return the sum.
 
@@ -38,13 +38,12 @@ def _transform_batch(x, means, inverted_covariances):
     # distribution keeping some intermediate computations as well
     diff = x.reshape(-1, D, 1) - means.T.reshape(1, D, N)
     diff = diff.transpose(0, 2, 1)
-    diff_over_cov = diff*inverted_covariances.reshape(1, N, D)
-    q = diff_over_cov*diff
-    q = 0.5*q.sum(axis=-1)
-    q = np.exp(q - q.max(axis=1).reshape(-1, 1))
-    q /= q.sum(axis=1).reshape(-1, 1)
+    q = -0.5 * (diff * inv_covariances.reshape(1, N, D) * diff).sum(axis=-1)
+    q = np.exp(q - q.max(axis=1, keepdims=True))
+    q /= q.sum(axis=1, keepdims=True)
 
     # Finally compute the unnormalized FV and return it
+    diff_over_cov = diff * inv_sqrt_covariances.reshape(1, N, D)
     return np.hstack([
         (q.reshape(M, N, 1) * diff_over_cov).sum(axis=0),
         (q.reshape(M, N, 1) * (diff_over_cov**2 - 1)).sum(axis=0)
@@ -128,6 +127,7 @@ class FisherVectors(BaseAggregator):
             "means": self.means,
             "covariances": self.covariances,
             "inverted_covariances": self.inverted_covariances,
+            "inverted_sqrt_covariances": self.inverted_sqrt_covariances,
             "normalization_factor": self.normalization_factor
         }
 
@@ -157,6 +157,8 @@ class FisherVectors(BaseAggregator):
         self.covariances = state.get("covariances", t.covariances)
         self.inverted_covariances = \
             state.get("inverted_covariances", t.inverted_covariances)
+        self.inverted_sqrt_covariances= \
+            state.get("inverted_sqrt_covariances", t.inverted_sqrt_covariances)
         self.normalization_factor = \
             state.get("normalization_factor", t.normalization_factor)
 
@@ -191,6 +193,7 @@ class FisherVectors(BaseAggregator):
         # precompute some values for encoding
         D = X[0].size
         self.inverted_covariances = (1./self.covariances)
+        self.inverted_sqrt_covariances = np.sqrt(1./self.covariances)
         self.normalization_factor = np.hstack([
             np.repeat(1.0/np.sqrt(self.weights), D),
             np.repeat(1.0/np.sqrt(2*self.weights), D)
@@ -229,7 +232,8 @@ class FisherVectors(BaseAggregator):
                     delayed(_transform_batch)(
                         X[j:min(e, j+self.inner_batch)],
                         self.means,
-                        self.inverted_covariances
+                        self.inverted_covariances,
+                        self.inverted_sqrt_covariances
                     )
                     for j in range(s, e, self.inner_batch)
                 )
