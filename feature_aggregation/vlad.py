@@ -14,14 +14,17 @@ class Vlad(BaseAggregator):
     Parameters
     ----------
     n_codewords: int
-                 The codebook size aka the number of clusters
+                 The codebook size aka the number of clusters.
+    inner_batch: int
+                 The batch size used to compute the differences between
+                 the feature descriptors and the centroids.
     dimension_ordering : {'th', 'tf'}
                          Changes how n-dimensional arrays are reshaped to form
                          simple local feature matrices. 'th' ordering means the
                          local feature dimension is the second dimension and
                          'tf' means it is the last dimension.
     """
-    def __init__(self, n_codewords, inner_batch, dimension_ordering="tf"):
+    def __init__(self, n_codewords, inner_batch=128, dimension_ordering="tf"):
         self.n_codewords = n_codewords
         self.inner_batch = inner_batch
 
