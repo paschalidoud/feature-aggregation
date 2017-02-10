@@ -18,15 +18,24 @@ class Vlad(BaseAggregator):
     inner_batch: int
                  The batch size used to compute the differences between
                  the feature descriptors and the centroids.
+    normalization: int
+                   A bitmask of possible normalizations
     dimension_ordering : {'th', 'tf'}
                          Changes how n-dimensional arrays are reshaped to form
                          simple local feature matrices. 'th' ordering means the
                          local feature dimension is the second dimension and
                          'tf' means it is the last dimension.
     """
-    def __init__(self, n_codewords, inner_batch=128, dimension_ordering="tf"):
+
+
+    POWER_NORMALIZATION = 1
+    L2_NORMALIZATION = 2
+
+    def __init__(self, n_codewords, normalization=3, inner_batch=128,
+                 dimension_ordering="tf"):
         self.n_codewords = n_codewords
         self.inner_batch = inner_batch
+        self.normalization = normalization
 
         self._clusterer = cluster.MiniBatchKMeans(
             n_clusters=self.n_codewords,
@@ -97,10 +106,17 @@ class Vlad(BaseAggregator):
                 ee = min(j+self.inner_batch, e)
 
                 v.fill(0)
-                v[range(self.inner_batch), words[j:ee]] = \
+                v[range(ee-j), words[j:ee]] = \
                     X[j:ee] - self._clusterer.cluster_centers_[words[j:ee]]
-
-                vlad[i] += v.sum(axis=0).ravel()
+                vlad[i] += v[:ee-j].sum(axis=0).ravel()
             vlad[i] /= lengths[i]
+        
+        # Check if we should be normalizing the power
+        if self.normalization & self.POWER_NORMALIZATION:
+            vlad = np.sqrt(np.abs(vlad))*np.sign(vlad)
+
+        # Check if we should be performing L2 normalization
+        if self.normalization & self.L2_NORMALIZATION:
+            vlad /= np.sqrt(np.sum(vlad**2, axis=1)).reshape(-1, 1)
 
         return vlad
