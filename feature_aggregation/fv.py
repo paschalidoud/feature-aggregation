@@ -4,6 +4,7 @@ probabilistic model"""
 from joblib import Parallel, delayed
 import numpy as np
 from sklearn.mixture import GaussianMixture
+from sklearn.decomposition import PCA
 
 from base import BaseAggregator
 
@@ -61,6 +62,12 @@ class FisherVectors(BaseAggregator):
     n_gaussians : int
                   The number of gaussians to be used for the fisher vector
                   encoding
+    n_pca_components : float
+                     Control the number of PCA components we will use to
+                     reduce the dimensionality of our data. The valid range
+                     for this parameter is (0, 1), whith 1 being used to denote
+                     that the PCA components are equal to the number of feature's
+                     dimension
     max_iter : int
                The maximum number of EM iterations
     normalization : int
@@ -73,7 +80,7 @@ class FisherVectors(BaseAggregator):
     inner_batch : int
                   Compute the fisher vector of 'inner_batch' vectors together.
                   It controls a trade off between speed and memory.
-    n_jobs: int
+    n_jobs : int
             The threads to use for the transform
     verbose : int
               Controls the verbosity of the GMM
@@ -82,21 +89,23 @@ class FisherVectors(BaseAggregator):
     POWER_NORMALIZATION = 1
     L2_NORMALIZATION = 2
 
-    def __init__(self, n_gaussians, max_iter=100, normalization=3,
-                 dimension_ordering="tf", inner_batch=64, n_jobs=-1,
-                 verbose=0):
+    def __init__(self, n_gaussians, n_pca_components=0.8, max_iter=100, 
+                 normalization=3, dimension_ordering="tf", inner_batch=64,
+                 n_jobs=-1, verbose=0):
         self.n_gaussians = n_gaussians
         self.max_iter = max_iter
         self.normalization = normalization
         self.inner_batch = inner_batch
         self.n_jobs = n_jobs
         self.verbose = verbose
+        self.n_pca_components = n_pca_components
 
         super(self.__class__, self).__init__(dimension_ordering)
 
         # initialize the rest of the  attributes of the class for any use
         # (mainly because we want to be able to check if fit has been called
         # before on this instance)
+        self.pca_model = None
         self.weights = None
         self.means = None
         self.covariances = None
@@ -116,12 +125,15 @@ class FisherVectors(BaseAggregator):
         # it but I believe this is more explicit
         return {
             "n_gaussians": self.n_gaussians,
+            "n_pca_components": self.n_pca_components,
             "max_iter": self.max_iter,
             "normalization": self.normalization,
             "dimension_ordering": self.dimension_ordering,
             "inner_batch": self.inner_batch,
             "n_jobs": self.n_jobs,
             "verbose": self.verbose,
+
+            "pca_model": self.pca_model,
 
             "weights": self.weights,
             "means": self.means,
@@ -144,6 +156,7 @@ class FisherVectors(BaseAggregator):
 
         # Load from state
         self.n_gaussians = state["n_gaussians"]
+        self.n_pca_components = state["n_pca_components"]
         self.max_iter = state.get("max_iter", t.max_iter)
         self.normalization = state.get("normalization", t.normalization)
         self.dimension_ordering = \
@@ -151,6 +164,8 @@ class FisherVectors(BaseAggregator):
         self.inner_batch = state.get("inner_batch", t.inner_batch)
         self.n_jobs = state.get("n_jobs", t.n_jobs)
         self.verbose = state.get("verbose", t.verbose)
+
+        self.pca_model = state.get("pca_model", t.pca_model)
 
         self.weights = state.get("weights", t.weights)
         self.means = state.get("means", t.means)
@@ -175,6 +190,14 @@ class FisherVectors(BaseAggregator):
             a list of nd arrays.
         """
         X, _ = self._reshape_local_features(X)
+        
+        if self.n_pca_components != 1:
+            # train PCA
+            self.pca_model = PCA(n_components=int(X.shape[-1]*self.n_pca_components))
+            self.pca_model.fit(X)
+
+            # apply PCA and reduce dimensionality
+            X = self.pca_model.transform(X)
 
         # consider changing the initialization parameters
         gmm = GaussianMixture(
@@ -219,6 +242,10 @@ class FisherVectors(BaseAggregator):
 
         # Get the local features and the number of local features per document
         X, lengths = self._reshape_local_features(X)
+
+        if self.n_pca_components != 1:
+            # Apply PCA and reduce dimensionality
+            X = self.pca_model.transform(X)
 
         # Allocate the memory necessary for the encoded data
         fv = np.zeros((len(lengths), self.normalization_factor.shape[0]))
