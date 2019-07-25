@@ -3,7 +3,7 @@
 import numpy as np
 from sklearn import cluster
 
-from base import BaseAggregator
+from .base import BaseAggregator
 
 
 class BagOfWords(BaseAggregator):

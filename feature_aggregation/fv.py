@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.mixture import GaussianMixture
 from sklearn.decomposition import PCA
 
-from base import BaseAggregator
+from .base import BaseAggregator
 
 
 def _transform_batch(x, means, inv_covariances, inv_sqrt_covariances):

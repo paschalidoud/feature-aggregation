@@ -4,7 +4,7 @@ import numpy as np
 from sklearn import cluster
 from sklearn.metrics import pairwise_distances
 
-from base import BaseAggregator
+from .base import BaseAggregator
 
 
 class LLC(BaseAggregator):
